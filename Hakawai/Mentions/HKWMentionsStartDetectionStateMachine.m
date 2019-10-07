@@ -115,6 +115,7 @@ typedef NS_ENUM(NSInteger, HKWMentionsStartDetectionState) {
     enum CharacterType {
         CharacterTypeWhitespace = 0,
         CharacterTypeControlCharacter,
+        CharacterTypePunctuation,
         CharacterTypeNormal
     };
     enum CharacterType currentCharacterType = CharacterTypeNormal;
@@ -126,11 +127,16 @@ typedef NS_ENUM(NSInteger, HKWMentionsStartDetectionState) {
         NSCharacterSet *controlCharacterSet = [delegate controlCharacterSet];
         if (controlCharacterSet && [controlCharacterSet characterIsMember:c]) {
             currentCharacterType = CharacterTypeControlCharacter;
+        } else if ([[NSCharacterSet punctuationCharacterSet] characterIsMember:c]) {
+            currentCharacterType = CharacterTypePunctuation;
         }
+
     }
     enum CharacterType previousCharacterType = CharacterTypeNormal;
     if ([whitespaceSet characterIsMember:previousCharacter]) {
         previousCharacterType = CharacterTypeWhitespace;
+    } else if ([[NSCharacterSet punctuationCharacterSet] characterIsMember:previousCharacter]) {
+        previousCharacterType = CharacterTypePunctuation;
     } else {
         // Get the control character set and see if the typed character is a control character
         NSCharacterSet *controlCharacterSet = [delegate controlCharacterSet];
@@ -161,14 +167,22 @@ typedef NS_ENUM(NSInteger, HKWMentionsStartDetectionState) {
                 }
             }
             else if ((currentCharacterType == CharacterTypeControlCharacter)
-                     && (previousCharacterType == CharacterTypeWhitespace || previousCharacter == 0)) {
-                if (self.charactersSinceLastWhitespace == 0) {
+                     && (previousCharacterType == CharacterTypeWhitespace
+                         || previousCharacter == 0
+                         || previousCharacterType == CharacterTypePunctuation)) {
+                if (self.charactersSinceLastWhitespace == 0 || previousCharacterType == CharacterTypePunctuation) {
                     // Start an EXPLICIT MENTION
+                    NSString *keyString;
+                    if (previousCharacterType == CharacterTypePunctuation) {
+                        keyString = @"";
+                    } else {
+                        keyString = [self.stringBuffer copy];
+                    }
                     self.state = HKWMentionsStartDetectionStateCreatingMention;
-                    [delegate beginMentionsCreationWithString:[self.stringBuffer copy]
-                                                   alreadyInserted:inserted
-                                             usingControlCharacter:YES
-                                                  controlCharacter:c];
+                    [delegate beginMentionsCreationWithString:keyString
+                                              alreadyInserted:inserted
+                                        usingControlCharacter:YES
+                                             controlCharacter:c];
                 }
             }
             else if (currentCharacterType == CharacterTypeWhitespace) {
@@ -180,8 +194,8 @@ typedef NS_ENUM(NSInteger, HKWMentionsStartDetectionState) {
         }
         case HKWMentionsStartDetectionStateQuiescentStalled: {
             // STATE: User is not creating mention, and can't start one without additional help
-            if (currentCharacterType == CharacterTypeWhitespace) {
-                // User typed a whitespace. This means they can now try to create a mention.
+            if (currentCharacterType == CharacterTypeWhitespace || currentCharacterType == CharacterTypePunctuation) {
+                // User typed a whitespace or a punctuation character. This means they can now try to create a mention.
                 self.state = HKWMentionsStartDetectionStateQuiescentReady;
             }
             break;
@@ -198,15 +212,20 @@ typedef NS_ENUM(NSInteger, HKWMentionsStartDetectionState) {
     // Determine the type of the character
     enum CharacterType {
         CharacterTypeWhitespace = 0,
+        CharacterTypePunctuation,
         CharacterTypeNormal
     };
     enum CharacterType deletedCharacterType = ([whitespaceSet characterIsMember:deletedChar] || deletedChar == 0)
                                                 ? CharacterTypeWhitespace
                                                 : CharacterTypeNormal;
-    enum CharacterType currentCharacterType = ([whitespaceSet characterIsMember:precedingChar] || precedingChar == 0)
-                                                ? CharacterTypeWhitespace
-                                                : CharacterTypeNormal;
-
+    enum CharacterType currentCharacterType;
+    if ([whitespaceSet characterIsMember:precedingChar] || precedingChar == 0) {
+        currentCharacterType = CharacterTypeWhitespace;
+    } else if ([[NSCharacterSet punctuationCharacterSet] characterIsMember:precedingChar]){
+        currentCharacterType = CharacterTypePunctuation;
+    } else {
+        currentCharacterType = CharacterTypeNormal;
+    }
     switch (self.state) {
         case HKWMentionsStartDetectionStateQuiescentReady: {
             if (currentCharacterType == CharacterTypeNormal) {
@@ -229,7 +248,10 @@ typedef NS_ENUM(NSInteger, HKWMentionsStartDetectionState) {
             // Change state to QuiescentReady when either:
             //   1. A whitespace character is encountered
             //   2. A NON-whitespace character is encountered and a whitespace character was deleted
-            if (currentCharacterType == CharacterTypeWhitespace || deletedCharacterType == CharacterTypeWhitespace) {
+            //   3. A punctuation character is encountered
+            if (currentCharacterType == CharacterTypeWhitespace
+                || deletedCharacterType == CharacterTypeWhitespace
+                || currentCharacterType == CharacterTypePunctuation) {
                 self.state = HKWMentionsStartDetectionStateQuiescentReady;
             }
             break;
@@ -246,10 +268,15 @@ typedef NS_ENUM(NSInteger, HKWMentionsStartDetectionState) {
     // Determine the type of the character
     enum CharacterType {
         CharacterTypeWhitespace = 0,
-        CharacterTypeNormal
+        CharacterTypeNormal,
+        CharacterTypePunctuation
     };
     enum CharacterType currentCharacterType = CharacterTypeNormal;
-    if ([whitespaceSet characterIsMember:c] || c == 0) currentCharacterType = CharacterTypeWhitespace;
+    if ([whitespaceSet characterIsMember:c] || c == 0) {
+        currentCharacterType = CharacterTypeWhitespace;
+    } else if ([[NSCharacterSet punctuationCharacterSet] characterIsMember:c]) {
+        currentCharacterType = CharacterTypePunctuation;
+    }
 
     switch (self.state) {
         case HKWMentionsStartDetectionStateQuiescentReady:
@@ -257,8 +284,8 @@ typedef NS_ENUM(NSInteger, HKWMentionsStartDetectionState) {
             // Reset the string buffer
             self.stringBuffer = [@"" mutableCopy];
             self.charactersSinceLastWhitespace = 0;
-            if (currentCharacterType == CharacterTypeWhitespace) {
-                // The user moved the cursor to the beginning of the text region, or right after a newline or whitespace
+            if (currentCharacterType == CharacterTypeWhitespace || currentCharacterType == CharacterTypePunctuation) {
+                // The user moved the cursor to the beginning of the text region, or right after a newline or whitespace or punctuation
                 //  character. This puts the user in the ready state.
                 self.state = HKWMentionsStartDetectionStateQuiescentReady;
             }
